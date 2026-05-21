@@ -3,46 +3,60 @@ import { fetchNewGame, validateCell, fetchHint } from '../api/gameApi';
 
 const EMPTY = '0';
 
-/** Определяет, является ли значение ячейки задачей (LaTeX или текстовая формула).
- *  Статичная цифра-подсказка — это строго одна цифра 1-9.
- *  Всё остальное (длиннее 1 символа) — задача для пользователя. */
 export function isMathCell(val) {
   if (!val || val === EMPTY) return false;
-  // Одна цифра 1-9 — статичная подсказка, не задача
   if (/^[1-9]$/.test(val)) return false;
-  // Всё остальное — задача (LaTeX или текстовая формула типа "7 - 3")
   return true;
 }
 
-/** Определяет, является ли ячейка статичной цифрой-подсказкой (ровно одна цифра 1-9) */
 export function isStaticHint(val) {
   if (!val || val === EMPTY) return false;
   return /^[1-9]$/.test(val);
 }
 
-/** Создаёт пустую сетку 9x9 заполненную значением */
 const makeGrid = (fill) => Array(9).fill(null).map(() => Array(9).fill(fill));
 
 export function useGameState() {
   const [difficulty, setDifficulty] = useState('easy');
   const [sessionId, setSessionId] = useState(null);
-  const [mask, setMask] = useState(makeGrid(EMPTY));         // данные от бэка
-  const [userGrid, setUserGrid] = useState(makeGrid(EMPTY)); // ввод пользователя (String[][])
-  const [notesGrid, setNotesGrid] = useState(makeGrid([]));  // заметки
+  const [mask, setMask] = useState(makeGrid(EMPTY));
+  const [userGrid, setUserGrid] = useState(makeGrid(EMPTY));
+  const [notesGrid, setNotesGrid] = useState(makeGrid([]));
   const [errors, setErrors] = useState(makeGrid(false));
-  const [hints, setHints] = useState(makeGrid(false));       // подсвечивать hint-ячейки
+  const [hints, setHints] = useState(makeGrid(false));
 
   const [selectedCell, setSelectedCell] = useState(null);
   const [notesMode, setNotesMode] = useState(false);
   const [mistakes, setMistakes] = useState(0);
-  const [gameOver, setGameOver] = useState(null); // null | 'win' | 'lose'
+  const [gameOver, setGameOver] = useState(null);
   const [score, setScore] = useState(0);
   const [time, setTime] = useState(0);
   const [loading, setLoading] = useState(false);
 
   const timerRef = useRef(null);
+  // Refs для актуальных значений в замыканиях
+  const maskRef = useRef(makeGrid(EMPTY));
+  const userGridRef = useRef(makeGrid(EMPTY));
+  const errorsRef = useRef(makeGrid(false));
+  const hintsRef = useRef(makeGrid(false));
+  const gameOverRef = useRef(null);
+  const sessionIdRef = useRef(null);
+  const notesModeRef = useRef(false);
+  const notesGridRef = useRef(makeGrid([]));
+  const selectedCellRef = useRef(null);
 
-  // ─── Таймер ──────────────────────────────────────────────
+  // Синхронизируем refs с state
+  useEffect(() => { maskRef.current = mask; }, [mask]);
+  useEffect(() => { userGridRef.current = userGrid; }, [userGrid]);
+  useEffect(() => { errorsRef.current = errors; }, [errors]);
+  useEffect(() => { hintsRef.current = hints; }, [hints]);
+  useEffect(() => { gameOverRef.current = gameOver; }, [gameOver]);
+  useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
+  useEffect(() => { notesModeRef.current = notesMode; }, [notesMode]);
+  useEffect(() => { notesGridRef.current = notesGrid; }, [notesGrid]);
+  useEffect(() => { selectedCellRef.current = selectedCell; }, [selectedCell]);
+
+  // ─── Таймер ───────────────────────────────────────────────
   const startTimer = useCallback(() => {
     clearInterval(timerRef.current);
     timerRef.current = setInterval(() => setTime(t => t + 1), 1000);
@@ -54,46 +68,12 @@ export function useGameState() {
 
   useEffect(() => () => clearInterval(timerRef.current), []);
 
-  // ─── Новая игра ───────────────────────────────────────────
-  const startNewGame = useCallback(async (diff = difficulty) => {
-    setLoading(true);
-    stopTimer();
-    setTime(0);
-    setScore(0);
-    setMistakes(0);
-    setGameOver(null);
-    setSelectedCell(null);
-    setNotesMode(false);
-    setErrors(makeGrid(false));
-    setHints(makeGrid(false));
-
-    try {
-      const data = await fetchNewGame(diff);
-      setSessionId(data.sessionId);
-      setMask(data.cells);
-      // ИСПРАВЛЕНО: userGrid инициализируем "0" везде — ввод пользователя хранится отдельно
-      setUserGrid(makeGrid(EMPTY));
-      setNotesGrid(makeGrid([]));
-      startTimer();
-    } catch (e) {
-      console.error('startNewGame error:', e);
-      alert('Не удалось подключиться к бэкенду. Проверь, запущен ли Spring Boot.');
-    } finally {
-      setLoading(false);
-    }
-  }, [difficulty, startTimer, stopTimer]);
-
-  // При смене сложности — перезапуск
-  useEffect(() => {
-    startNewGame(difficulty);
-  }, [difficulty]); // eslint-disable-line
-
-  // ─── Проверка победы ──────────────────────────────────────
+  // ─── Проверка победы (использует refs — всегда актуальные данные) ──
   const checkWin = useCallback((grid, errs) => {
+    const currentMask = maskRef.current;
     for (let r = 0; r < 9; r++) {
       for (let c = 0; c < 9; c++) {
-        if (!isStaticHint(mask[r][c])) {
-          // Ячейка не заполнена или содержит ошибку
+        if (!isStaticHint(currentMask[r][c])) {
           if (grid[r][c] === EMPTY || errs[r][c]) return;
         }
       }
@@ -101,43 +81,92 @@ export function useGameState() {
     stopTimer();
     setGameOver('win');
     setScore(s => s + 500);
-  }, [mask, stopTimer]);
+  }, [stopTimer]);
 
-  // ─── Ввод числа ──────────────────────────────────────────
+  // ─── Новая игра ────────────────────────────────────────────
+  const startNewGame = useCallback(async (diff = difficulty) => {
+    setLoading(true);
+    stopTimer();
+    setTime(0);
+    setScore(0);
+    setMistakes(0);
+    setGameOver(null);
+    gameOverRef.current = null;
+    setSelectedCell(null);
+    setNotesMode(false);
+    const emptyErrors = makeGrid(false);
+    const emptyHints = makeGrid(false);
+    const emptyNotes = makeGrid([]);
+    const emptyUser = makeGrid(EMPTY);
+    setErrors(emptyErrors);
+    setHints(emptyHints);
+    errorsRef.current = emptyErrors;
+    hintsRef.current = emptyHints;
+    notesGridRef.current = emptyNotes;
+    userGridRef.current = emptyUser;
+
+    try {
+      const data = await fetchNewGame(diff);
+      setSessionId(data.sessionId);
+      sessionIdRef.current = data.sessionId;
+      setMask(data.cells);
+      maskRef.current = data.cells;
+      setUserGrid(emptyUser);
+      setNotesGrid(emptyNotes);
+      startTimer();
+    } catch (e) {
+      console.error('startNewGame error:', e);
+      alert('Не удалось подключиться к бэкенду.');
+    } finally {
+      setLoading(false);
+    }
+  }, [difficulty, startTimer, stopTimer]);
+
+  useEffect(() => {
+    startNewGame(difficulty);
+  }, [difficulty]); // eslint-disable-line
+
+  // ─── Ввод числа (использует refs — нет проблемы со stale closure) ──
   const handleInput = useCallback(async (numStr) => {
+    const selectedCell = selectedCellRef.current;
+    const gameOver = gameOverRef.current;
+    const mask = maskRef.current;
+    const userGrid = userGridRef.current;
+    const errors = errorsRef.current;
+    const hints = hintsRef.current;
+    const notesMode = notesModeRef.current;
+    const notesGrid = notesGridRef.current;
+    const sessionId = sessionIdRef.current;
+
     if (!selectedCell || gameOver) return;
     const { row, col } = selectedCell;
 
-    // Нельзя менять статичные ячейки и LaTeX-ячейки (пользователь вводит ответ)
     const originalCell = mask[row][col];
     if (isStaticHint(originalCell)) return;
-
-    // Нельзя перезаписать уже правильно введённое значение
     if (userGrid[row][col] !== EMPTY && !errors[row][col] && !hints[row][col]) return;
 
     if (notesMode) {
-      // Режим заметок
       const newNotes = notesGrid.map(r => r.map(c => [...c]));
       const num = parseInt(numStr, 10);
       const cell = newNotes[row][col];
       newNotes[row][col] = cell.includes(num)
         ? cell.filter(n => n !== num)
         : [...cell, num].sort((a, b) => a - b);
+      notesGridRef.current = newNotes;
       setNotesGrid(newNotes);
       return;
     }
 
-    // Обновляем grид локально сразу (UX — не ждём бэк)
     const newGrid = userGrid.map(r => [...r]);
     newGrid[row][col] = numStr;
+    userGridRef.current = newGrid;
     setUserGrid(newGrid);
 
-    // Очищаем заметки в ячейке
     const newNotes = notesGrid.map(r => r.map(c => [...c]));
     newNotes[row][col] = [];
+    notesGridRef.current = newNotes;
     setNotesGrid(newNotes);
 
-    // Валидация через бэк
     try {
       const isValid = await validateCell(sessionId, row, col, numStr);
       const newErrors = errors.map(r => [...r]);
@@ -149,7 +178,7 @@ export function useGameState() {
         setScore(s => s - 20);
         setMistakes(m => {
           const next = m + 1;
-          if (next >= 3) { stopTimer(); setGameOver('lose'); }
+          if (next >= 3) { stopTimer(); setGameOver('lose'); gameOverRef.current = 'lose'; }
           return next;
         });
       } else {
@@ -158,37 +187,57 @@ export function useGameState() {
         setScore(s => s + 50);
       }
 
+      errorsRef.current = newErrors;
+      hintsRef.current = newHints;
       setErrors(newErrors);
       setHints(newHints);
+
       if (isValid) checkWin(newGrid, newErrors);
     } catch (e) {
       console.error('validateCell error:', e);
     }
-  }, [selectedCell, gameOver, mask, userGrid, errors, hints, notesMode, notesGrid, sessionId, stopTimer, checkWin]);
+  }, [stopTimer, checkWin]);
 
-  // ─── Стереть ячейку ───────────────────────────────────────
+  // ─── Стереть ячейку ────────────────────────────────────────
   const handleErase = useCallback(() => {
+    const selectedCell = selectedCellRef.current;
+    const gameOver = gameOverRef.current;
+    const mask = maskRef.current;
+    const userGrid = userGridRef.current;
+    const errors = errorsRef.current;
+    const hints = hintsRef.current;
+
     if (!selectedCell || gameOver) return;
     const { row, col } = selectedCell;
     if (isStaticHint(mask[row][col])) return;
-    // Стираем только если там ошибка или значение (но не правильно введённое — только если с ошибкой или hint)
     if (userGrid[row][col] === EMPTY) return;
 
     const newGrid = userGrid.map(r => [...r]);
     newGrid[row][col] = EMPTY;
+    userGridRef.current = newGrid;
     setUserGrid(newGrid);
 
     const newErrors = errors.map(r => [...r]);
     newErrors[row][col] = false;
+    errorsRef.current = newErrors;
     setErrors(newErrors);
 
     const newHints = hints.map(r => [...r]);
     newHints[row][col] = false;
+    hintsRef.current = newHints;
     setHints(newHints);
-  }, [selectedCell, gameOver, mask, userGrid, errors, hints]);
+  }, []);
 
-  // ─── Подсказка ────────────────────────────────────────────
+  // ─── Подсказка ─────────────────────────────────────────────
   const handleHint = useCallback(async () => {
+    const selectedCell = selectedCellRef.current;
+    const gameOver = gameOverRef.current;
+    const sessionId = sessionIdRef.current;
+    const mask = maskRef.current;
+    const userGrid = userGridRef.current;
+    const errors = errorsRef.current;
+    const hints = hintsRef.current;
+
     if (!selectedCell || !sessionId || gameOver) return;
     const { row, col } = selectedCell;
     if (isStaticHint(mask[row][col])) return;
@@ -198,14 +247,17 @@ export function useGameState() {
       const hintVal = await fetchHint(sessionId, row, col);
       const newGrid = userGrid.map(r => [...r]);
       newGrid[row][col] = hintVal.trim();
+      userGridRef.current = newGrid;
       setUserGrid(newGrid);
 
       const newErrors = errors.map(r => [...r]);
       newErrors[row][col] = false;
+      errorsRef.current = newErrors;
       setErrors(newErrors);
 
       const newHints = hints.map(r => [...r]);
-      newHints[row][col] = true; // подсвечиваем как hint
+      newHints[row][col] = true;
+      hintsRef.current = newHints;
       setHints(newHints);
 
       setScore(s => s - 10);
@@ -213,17 +265,18 @@ export function useGameState() {
     } catch (e) {
       console.error('fetchHint error:', e);
     }
-  }, [selectedCell, sessionId, gameOver, mask, userGrid, errors, hints, checkWin]);
+  }, [checkWin]);
 
-  // ─── Клавиатура ───────────────────────────────────────────
+  // ─── Клавиатура ────────────────────────────────────────────
   useEffect(() => {
     const onKey = (e) => {
-      if (gameOver) return;
+      if (gameOverRef.current) return;
       if (e.key >= '1' && e.key <= '9') { handleInput(e.key); return; }
       if (e.key === 'Backspace' || e.key === 'Delete') { handleErase(); return; }
       if (e.key === 'n' || e.key === 'N') { setNotesMode(p => !p); return; }
-      if (!selectedCell) return;
-      let { row, col } = selectedCell;
+      const sel = selectedCellRef.current;
+      if (!sel) return;
+      let { row, col } = sel;
       if (e.key === 'ArrowUp')    row = Math.max(0, row - 1);
       if (e.key === 'ArrowDown')  row = Math.min(8, row + 1);
       if (e.key === 'ArrowLeft')  col = Math.max(0, col - 1);
@@ -232,13 +285,11 @@ export function useGameState() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [handleInput, handleErase, selectedCell, gameOver]);
+  }, [handleInput, handleErase]);
 
   return {
-    // state
     difficulty, sessionId, mask, userGrid, notesGrid, errors, hints,
     selectedCell, notesMode, mistakes, gameOver, score, time, loading,
-    // actions
     setDifficulty, setSelectedCell, setNotesMode,
     startNewGame, handleInput, handleErase, handleHint,
   };
