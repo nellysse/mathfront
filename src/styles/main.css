@@ -407,10 +407,19 @@ button { font-family: inherit; cursor: pointer; }
 
 /* ── Responsive ─────────────────────────────────────────── */
 @media (max-width: 820px) {
-  :root { --cell-size: 40px; --grid-size: 372px; }
-  .app-container { flex-direction: column; padding: 20px; gap: 20px; align-items: center; }
+  body { padding: 10px; }
+  :root { 
+    --grid-size: min(100vw - 44px, 450px); 
+    --cell-size: calc((var(--grid-size) - 12px) / 9); 
+  }
+  .app-container { flex-direction: column; padding: 12px; gap: 16px; align-items: center; width: 100%; box-sizing: border-box; }
   .right-panel { width: var(--grid-size); }
   .panel-top, .mistakes-bar { width: var(--grid-size); }
-  .cell-math .katex-html { font-size: 14px; }
-  .cell--math-sm .cell-math .katex-html { font-size: 11px; }
+  
+  .cell-math .katex-html { font-size: max(11px, calc(var(--cell-size) * 0.35)); }
+  .cell--math-sm .cell-math .katex-html { font-size: max(9px, calc(var(--cell-size) * 0.28)); }
+  .cell-user { font-size: max(16px, calc(var(--cell-size) * 0.5)); }
+  .cell-static { font-size: max(14px, calc(var(--cell-size) * 0.45)); }
+  
+  .numpad-btn { font-size: 20px; aspect-ratio: 1.4; }
 }
